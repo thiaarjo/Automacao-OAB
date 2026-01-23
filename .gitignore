@@ -1,0 +1,17 @@
+# Ignorar ambiente virtual e cache do Python
+.venv/
+__pycache__/
+*.pyc
+
+# Ignorar as pastas pesadas de PDFs
+Downloads_OAB/
+Provas_Limpas/
+
+# Ignorar arquivos gerados (Banco de dados e Excel)
+OAB_Questoes.db
+Importacao_Prova_OAB.xlsx
+
+# Ignorar logs de execução e drivers
+log_execucao.txt
+*.log
+chromedriver.exe
