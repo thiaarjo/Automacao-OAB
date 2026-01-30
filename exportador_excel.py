@@ -1,78 +1,117 @@
 import sqlite3
 import pandas as pd
 import os
+import re
+from datetime import datetime
 
 # --- CONFIGURAÇÕES ---
 NOME_BANCO = "OAB_Questoes.db"
-NOME_ARQUIVO_SAIDA = "Importacao_Prova_OAB.xlsx"
+NOME_ARQUIVO_SAIDA = "Exportacao_OAB_Template_Novo.xlsx"
+
+# Colunas EXATAS do novo template (Não alterar)
+COLUNAS_TEMPLATE = [
+    "Enunciado da Questão",
+    "Código da Disciplina",
+    "Dificuldade",
+    "Tipo de Uso",
+    "Alternativa A",
+    "Alternativa B",
+    "Alternativa C",
+    "Alternativa D",
+    "Resposta Correta",
+    "Explicação (opcional)",
+    "Fonte (opcional)",
+    "Ano do Exame (opcional)"
+]
 
 def conectar_banco():
     return sqlite3.connect(NOME_BANCO)
 
-def gerar_codigo_questao(nome_exame, numero, tipo, materia="GERAL"):
+def limpar_texto(texto):
+    """Remove quebras de linha extras e espaços desnecessários."""
+    if not isinstance(texto, str): return ""
+    texto = texto.replace('\n', ' ').replace('\r', '')
+    return re.sub(r'\s+', ' ', texto).strip()
+
+def identificar_disciplina_oab(numero):
     """
-    Gera um código único para a questão (Ex: XIV_OAB_OBJ_Q1 ou XIV_OAB_PENAL_Q2).
-    Remove espaços e caracteres especiais para ficar limpo.
+    Retorna a disciplina com base no número da questão (Padrão OAB 1ª Fase).
     """
-    exame_limpo = nome_exame.replace(" ", "_").replace("ª", "").replace("º", "").upper()
-    exame_curto = exame_limpo.split("_")[0] # Pega só o prefixo (Ex: XIV)
+    try:
+        n = int(numero)
+    except:
+        return "A CLASSIFICAR"
+
+    # Mapeamento oficial (Blocos)
+    if 1 <= n <= 8: return "Ética Profissional"
+    if 9 <= n <= 10: return "Filosofia do Direito"
+    if 11 <= n <= 16: return "Direito Constitucional"
+    if 17 <= n <= 18: return "Direitos Humanos"
+    if 19 <= n <= 20: return "Direito Eleitoral"
+    if 21 <= n <= 22: return "Direito Internacional"
+    if 23 <= n <= 24: return "Direito Financeiro"
+    if 25 <= n <= 29: return "Direito Tributário"
+    if 30 <= n <= 34: return "Direito Administrativo"
+    if 35 <= n <= 36: return "Direito Ambiental"
+    if 37 <= n <= 42: return "Direito Civil"
+    if 43 <= n <= 44: return "ECA"
+    if 45 <= n <= 46: return "Direito do Consumidor"
+    if 47 <= n <= 50: return "Direito Empresarial"
+    if 51 <= n <= 56: return "Direito Processual Civil"
+    if 57 <= n <= 62: return "Direito Penal"
+    if 63 <= n <= 68: return "Direito Processual Penal"
+    if 69 <= n <= 70: return "Direito Previdenciário"
+    if 71 <= n <= 75: return "Direito do Trabalho"
+    if 76 <= n <= 80: return "Direito Processual do Trabalho"
     
-    if tipo == "OBJ":
-        return f"{exame_curto}_OBJ_Q{numero}"
-    else:
-        mat_limpa = materia.replace(" ", "").upper()[:4] # Pega 4 letras da materia
-        return f"{exame_curto}_{mat_limpa}_Q{numero}"
+    return "OUTROS"
 
 def exportar_objetivas(conn):
-    print(" Processando Questões Objetivas...")
+    print("📋 Processando Questões Objetivas...")
     
     query = """
     SELECT 
         e.nome_exame,
         q.numero,
         q.enunciado,
-        q.gabarito_letra,
-        alt.letra,
-        alt.texto as texto_alternativa
+        q.alternativa_a,
+        q.alternativa_b,
+        q.alternativa_c,
+        q.alternativa_d,
+        q.gabarito_letra
     FROM questoes q
     JOIN arquivos arq ON q.arquivo_id = arq.id
     JOIN exames e ON arq.exame_id = e.id
-    JOIN alternativas alt ON alt.questao_id = q.id
     WHERE q.tipo = 'OBJETIVA'
-    ORDER BY e.id, q.numero, alt.letra
+    ORDER BY e.id, q.numero
     """
     
-    # Lê do banco
     df_raw = pd.read_sql_query(query, conn)
     
     if df_raw.empty:
-        print(" Nenhuma questão objetiva encontrada.")
-        return pd.DataFrame()
+        print("⚠️ Nenhuma questão objetiva encontrada.")
+        return pd.DataFrame(columns=COLUNAS_TEMPLATE)
 
-    # Lista para montar as linhas do Excel
     linhas_excel = []
+    ano_atual = datetime.now().year
 
     for index, row in df_raw.iterrows():
-        # Lógica de Código Único
-        cod_questao = gerar_codigo_questao(row['nome_exame'], row['numero'], "OBJ")
+        # Aplica a função de mapeamento aqui
+        disciplina = identificar_disciplina_oab(row['numero'])
         
-        # Verifica se é a correta
-        # (Trata caso de gabarito nulo ou minúsculo)
-        gabarito_oficial = str(row['gabarito_letra']).upper().strip()
-        letra_atual = str(row['letra']).upper().strip()
-        eh_correta = "S" if gabarito_oficial == letra_atual else "N"
-
         linhas_excel.append({
-            "COD_ULTIMO_NIVEL_CONTEUDO": "OAB_1FASE",  # Código fixo de agrupamento
-            "NOME_ULTIMO_NIVEL_CONTEUDO": "OAB - 1ª Fase (Objetiva)",
-            "COD_QUESTAO": cod_questao,
-            "TIPO_QUESTAO": "o",
-            "NIVEL_QUESTAO": "Médio",
-            "JUSTIFICATIVA": "", # Objetivas geralmente não têm justificativa no seu banco atual (fase 1)
-            "ENUNCIADO": row['enunciado'],
-            "DESC_ALTERNATIVA": row['texto_alternativa'],
-            "ALTER_CORRETA": eh_correta,
-            "CAMPOS_CUSTOMIZADOS": ""
+            "Enunciado da Questão": limpar_texto(row['enunciado']),
+            "Código da Disciplina": disciplina.upper(), # Coloca em MAIÚSCULO para padronizar
+            "Dificuldade": "Médio",
+            "Tipo de Uso": "Simulado",
+            "Alternativa A": limpar_texto(row['alternativa_a']),
+            "Alternativa B": limpar_texto(row['alternativa_b']),
+            "Alternativa C": limpar_texto(row['alternativa_c']),
+            "Alternativa D": limpar_texto(row['alternativa_d']),
+            "Resposta Correta": str(row['gabarito_letra']).strip().upper() if row['gabarito_letra'] else "",
+            "Explicação (opcional)": "", 
+            "Fonte (opcional)": row['nome_exame'],
+            "Ano do Exame (opcional)": ano_atual
         })
 
     return pd.DataFrame(linhas_excel)
@@ -85,7 +124,6 @@ def exportar_discursivas(conn):
         e.nome_exame,
         arq.materia,
         q.numero,
-        q.tipo,
         q.enunciado,
         q.gabarito_texto
     FROM questoes q
@@ -98,37 +136,37 @@ def exportar_discursivas(conn):
     df_raw = pd.read_sql_query(query, conn)
     
     if df_raw.empty:
-        print(" Nenhuma questão discursiva encontrada.")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=COLUNAS_TEMPLATE)
 
     linhas_excel = []
 
     for index, row in df_raw.iterrows():
-        materia = row['materia'] if row['materia'] else "GERAL"
-        cod_questao = gerar_codigo_questao(row['nome_exame'], row['numero'], "DISC", materia)
-        
-        # O Gabarito Comentado entra no campo JUSTIFICATIVA (para o professor ver)
-        justificativa = row['gabarito_texto'] if row['gabarito_texto'] else "Gabarito não disponível."
+        # Na 2ª Fase, a matéria vem do nome do arquivo (já salvo na coluna materia)
+        materia = row['materia'] if row['materia'] else "PRÁTICA JURÍDICA"
+        gabarito = limpar_texto(row['gabarito_texto']) if row['gabarito_texto'] else "Gabarito indisponível."
 
         linhas_excel.append({
-            "COD_ULTIMO_NIVEL_CONTEUDO": f"OAB_2FASE_{materia.replace(' ', '_')}",
-            "NOME_ULTIMO_NIVEL_CONTEUDO": f"OAB 2ª Fase - {materia}",
-            "COD_QUESTAO": cod_questao,
-            "TIPO_QUESTAO": "t", # t = teórica/discursiva
-            "NIVEL_QUESTAO": "Difícil",
-            "JUSTIFICATIVA": justificativa,
-            "ENUNCIADO": row['enunciado'],
-            "TIPO_RESPOSTA": 1, # 1 = Linhas
-            "TAMANHO_RESPOSTA": 30, # Padrão de 30 linhas
-            "IMPRIMIR_PAUTA": "S",
-            "CAMPOS_CUSTOMIZADOS": ""
+            "Enunciado da Questão": limpar_texto(row['enunciado']),
+            "Código da Disciplina": materia.upper(),
+            "Dificuldade": "Médio",
+            "Tipo de Uso": "Prática",
+            "Alternativa A": "-",
+            "Alternativa B": "-",
+            "Alternativa C": "-",
+            "Alternativa D": "-",
+            "Resposta Correta": "-",
+            "Explicação (opcional)": f"PADRÃO DE RESPOSTA: {gabarito}",
+            "Fonte (opcional)": f"{row['nome_exame']} - 2ª Fase",
+            "Ano do Exame (opcional)": datetime.now().year
         })
 
     return pd.DataFrame(linhas_excel)
 
 def main():
+    print(f"🚀 INICIANDO EXPORTAÇÃO PARA FORMATO: {NOME_ARQUIVO_SAIDA}")
+    
     if not os.path.exists(NOME_BANCO):
-        print(f" Banco de dados {NOME_BANCO} não encontrado.")
+        print(f"❌ Banco de dados {NOME_BANCO} não encontrado.")
         return
 
     conn = conectar_banco()
@@ -139,27 +177,26 @@ def main():
     
     conn.close()
 
-    # 2. Grava no Excel
-    print(f"\n Gravando arquivo Excel: {NOME_ARQUIVO_SAIDA}...")
+    print(f"\n💾 Gravando arquivo Excel...")
     
     try:
         with pd.ExcelWriter(NOME_ARQUIVO_SAIDA, engine='openpyxl') as writer:
-            # Aba 1: Objetivas
-            if not df_objetivas.empty:
-                df_objetivas.to_excel(writer, sheet_name='questoes_objetivas', index=False)
-                print(f"   Aba 'questoes_objetivas' criada com {len(df_objetivas)} linhas.")
+            # Consolida tudo numa aba só
+            df_total = pd.concat([df_objetivas, df_discursivas])
             
-            # Aba 2: Discursivas
-            if not df_discursivas.empty:
-                df_discursivas.to_excel(writer, sheet_name='questoes_discursivas', index=False)
-                print(f"   Aba 'questoes_discursivas' criada com {len(df_discursivas)} questões.")
+            # Garante a ordem das colunas e preenche vazios
+            df_total = df_total[COLUNAS_TEMPLATE].fillna("")
+            
+            df_total.to_excel(writer, sheet_name='Questoes', index=False)
+            
+            print(f"   -> Total exportado: {len(df_total)} questões.")
         
-        print(f"\n SUCESSO! Arquivo pronto para importação.")
-        print(f"Local: {os.path.abspath(NOME_ARQUIVO_SAIDA)}")
+        print(f"\n✅ SUCESSO! Exportação concluída.")
+        print(f"📂 Arquivo: {os.path.abspath(NOME_ARQUIVO_SAIDA)}")
         
     except Exception as e:
-        print(f"Erro ao salvar Excel: {e}")
-        print("Dica: Verifique se o arquivo Excel já não está aberto.")
+        print(f"❌ Erro ao salvar Excel: {e}")
+        print("⚠️ Dica: Feche o arquivo Excel se ele estiver aberto!")
 
 if __name__ == "__main__":
     main()
